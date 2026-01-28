@@ -47,6 +47,7 @@ or clone the repository and launch:
 			* AWS_DEFAULT_REGION
 		* Your `~/.aws/ files`
 			* Configured with `aws configure`
+		* AWS named profile (use `--profile` option)
 
 ## Usage
 
@@ -98,6 +99,38 @@ or clone the repository and launch:
 	$ s3-pit-restore -b my-bucket -d my-restored-subfolder -p mysubfolder -f "05-01-2016 00:00:00 +2" -t "06-01-2016 00:00:00 +2"
 	```
 
+### Using AWS Named Profiles
+
+If you have multiple AWS accounts or use AWS SSO, you can specify a named profile using the `--profile` flag. This is useful when:
+
+* You have multiple AWS accounts configured in `~/.aws/credentials` or `~/.aws/config`
+* You use AWS SSO (Single Sign-On) for authentication
+* You want to avoid setting environment variables
+
+**Basic usage with a named profile:**
+```
+$ s3-pit-restore -b my-bucket -B restored-bucket-s3 -t "06-17-2016 23:59:50 +2" --profile my-aws-profile
+```
+
+**Using AWS SSO profile:**
+
+First, ensure you're logged in to your SSO session:
+```
+$ aws sso login --profile my-sso-profile
+```
+
+Then run the restore:
+```
+$ s3-pit-restore -b my-bucket -B restored-bucket-s3 -t "06-17-2016 23:59:50 +2" --profile my-sso-profile
+```
+
+**Cross-account restore example:**
+
+Restore from a backup bucket in one account to a destination bucket (assuming your profile has appropriate cross-account permissions):
+```
+$ s3-pit-restore -b source-account-backup-bucket -B dest-account-bucket -p data/ -P restored-data/ -t "01-15-2024 12:00:00 +0" --profile cross-account-profile
+```
+
 ## Command line options
 
 ```
@@ -130,6 +163,7 @@ options:
                         max number of concurrent download requests
   --sse {AES256,aws:kms}
                         Specify server-side encryption
+  --profile PROFILE     AWS profile to use
 ```
 
 ## Docker Usage
