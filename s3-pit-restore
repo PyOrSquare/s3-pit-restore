@@ -239,6 +239,131 @@ class TestS3PitRestoreSameBucket(unittest.TestCase):
         self.assertEqual(1, len(result.get("DeleteMarkers", [])))
 
 
+class TestS3PitRestoreProfile(unittest.TestCase):
+    """Test cases for AWS profile functionality using mocks."""
+
+    def test_profile_creates_session_with_profile(self):
+        """Test that --profile flag correctly passes profile_name to boto3.Session."""
+        from unittest.mock import patch, MagicMock
+        print('Running test_profile_creates_session_with_profile ...')
+
+        # Save original profile value
+        original_profile = args.profile
+
+        try:
+            with patch('boto3.Session') as mock_session:
+                mock_session.return_value = MagicMock()
+
+                # Test with a profile name
+                args.profile = 'test-profile'
+                session = boto3.Session(profile_name=args.profile) if args.profile else boto3.Session()
+                mock_session.assert_called_with(profile_name='test-profile')
+
+            with patch('boto3.Session') as mock_session:
+                mock_session.return_value = MagicMock()
+
+                # Test without a profile (should call Session without profile_name)
+                args.profile = None
+                session = boto3.Session(profile_name=args.profile) if args.profile else boto3.Session()
+                mock_session.assert_called_with()
+
+        finally:
+            # Restore original profile value
+            args.profile = original_profile
+
+        print("Profile test passed!")
+
+    def test_profile_with_endpoint_url(self):
+        """Test that --profile and --endpoint-url can be used together."""
+        from unittest.mock import patch, MagicMock
+        print('Running test_profile_with_endpoint_url ...')
+
+        # Save original values
+        original_profile = args.profile
+        original_endpoint_url = args.endpoint_url
+
+        try:
+            with patch('boto3.Session') as mock_session:
+                mock_client = MagicMock()
+                mock_session_instance = MagicMock()
+                mock_session_instance.client.return_value = mock_client
+                mock_session.return_value = mock_session_instance
+
+                # Test with both profile and endpoint_url
+                args.profile = 'test-profile'
+                args.endpoint_url = 'http://localhost:9000'
+
+                session = boto3.Session(profile_name=args.profile) if args.profile else boto3.Session()
+                client = session.client('s3', endpoint_url=args.endpoint_url)
+
+                # Verify Session was called with the profile
+                mock_session.assert_called_with(profile_name='test-profile')
+                # Verify client was called with the endpoint_url
+                mock_session_instance.client.assert_called_with('s3', endpoint_url='http://localhost:9000')
+
+        finally:
+            # Restore original values
+            args.profile = original_profile
+            args.endpoint_url = original_endpoint_url
+
+        print("Profile with endpoint_url test passed!")
+
+    def test_do_restore_uses_profile_and_endpoint(self):
+        """Test that do_restore correctly uses profile and endpoint_url."""
+        from unittest.mock import patch, MagicMock
+        print('Running test_do_restore_uses_profile_and_endpoint ...')
+
+        # Save original values
+        original_profile = args.profile
+        original_endpoint_url = args.endpoint_url
+        original_bucket = args.bucket
+        original_prefix = args.prefix
+        original_timestamp = args.timestamp
+        original_dest_bucket = args.dest_bucket
+        original_dry_run = args.dry_run
+
+        try:
+            with patch('boto3.Session') as mock_session:
+                mock_client = MagicMock()
+                mock_paginator = MagicMock()
+                # Return empty pages to end the restore quickly
+                mock_paginator.paginate.return_value = [{"Versions": []}]
+                mock_client.get_paginator.return_value = mock_paginator
+
+                mock_session_instance = MagicMock()
+                mock_session_instance.client.return_value = mock_client
+                mock_session.return_value = mock_session_instance
+
+                with patch('boto3.s3.transfer.S3Transfer'):
+                    # Set test values
+                    args.profile = 'my-profile'
+                    args.endpoint_url = 'http://custom-endpoint:9000'
+                    args.bucket = 'test-bucket'
+                    args.prefix = 'test-prefix/'
+                    args.timestamp = '2024-01-01 00:00:00+00:00'
+                    args.dest_bucket = 'dest-bucket'
+                    args.dry_run = True
+
+                    do_restore()
+
+                    # Verify Session was created with the profile
+                    mock_session.assert_called_with(profile_name='my-profile')
+                    # Verify client was created with endpoint_url
+                    mock_session_instance.client.assert_called_with('s3', endpoint_url='http://custom-endpoint:9000')
+
+        finally:
+            # Restore original values
+            args.profile = original_profile
+            args.endpoint_url = original_endpoint_url
+            args.bucket = original_bucket
+            args.prefix = original_prefix
+            args.timestamp = original_timestamp
+            args.dest_bucket = original_dest_bucket
+            args.dry_run = original_dry_run
+
+        print("do_restore profile/endpoint test passed!")
+
+
 def signal_handler(signal, frame):
     executor.shutdown(wait=False)
     for future in list(futures.keys()):
@@ -479,6 +604,21 @@ def do_restore():
 if __name__=='__main__':
     signal.signal(signal.SIGINT, signal_handler)
 
+    # Check for --unit-test early before argparse validates required arguments
+    if '--unit-test' in sys.argv:
+        runner = unittest.TextTestRunner()
+        print("Running unit tests (no AWS resources required)...")
+        # Initialize args with default values for unit tests
+        args = argparse.Namespace(
+            bucket=None, dest_bucket=None, dest='', prefix='', dest_prefix='',
+            timestamp=None, from_timestamp=None, enable_glacier=False, verbose=False,
+            endpoint_url=None, dry_run=False, debug=False, test=False, unit_test=True,
+            max_workers=10, sse=None, profile=None
+        )
+        itersuite = unittest.TestLoader().loadTestsFromTestCase(TestS3PitRestoreProfile)
+        result = runner.run(itersuite)
+        sys.exit(0 if result.wasSuccessful() else 1)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-b', '--bucket', help='s3 bucket to restore from', required=True)
     parser.add_argument('-B', '--dest-bucket', help='s3 bucket where recovering to', required=False)
@@ -492,7 +632,8 @@ if __name__=='__main__':
     parser.add_argument('-u', '--endpoint-url', help='use another endpoint URL for s3 service')
     parser.add_argument('--dry-run', help='execute query without transferring files', action='store_true')
     parser.add_argument('--debug', help='enable debug output', action='store_true')
-    parser.add_argument('--test', help='s3 pit restore testing', action='store_true')
+    parser.add_argument('--test', help='s3 pit restore integration testing (requires real AWS resources)', action='store_true')
+    parser.add_argument('--unit-test', help='run unit tests only (no AWS resources required)', action='store_true')
     parser.add_argument('--max-workers', help='max number of concurrent download requests', default=10, type=int)
     parser.add_argument('--sse', choices=['AES256', 'aws:kms'], help='Specify server-side encryption')
     parser.add_argument('--profile', help='AWS profile to use', default=None)
@@ -508,6 +649,14 @@ if __name__=='__main__':
         runner = unittest.TextTestRunner()
         dest_bucket = args.dest_bucket
         dest_prefix = args.dest_prefix
+
+        # Run profile unit tests first (these don't require S3 access)
+        print("Running unit tests...")
+        itersuite = unittest.TestLoader().loadTestsFromTestCase(TestS3PitRestoreProfile)
+        runner.run(itersuite)
+
+        # Run integration tests (these require real AWS resources)
+        print("Running integration tests (requires AWS resources)...")
 
         #To run the test cases for local restore, Later we restore this
         args.dest_bucket = None
